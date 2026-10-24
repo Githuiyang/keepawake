@@ -190,7 +190,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         super.init()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.autosaveName = "KeepAwakeStatusItem"
-        statusItem.button?.title = model.isOn ? "☀️" : "🌙"
+        // emoji 作为 button.title 在 macOS 26 上不渲染（占位存在但屏幕空白），
+        // 改用 SF Symbol 图像——原生菜单栏图标的标准机制。
+        statusItem.button?.image = Self.iconImage(isOn: model.isOn)
 
         let menu = NSMenu()
         menu.delegate = self
@@ -200,13 +202,21 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] on in
                 guard let self else { return }
-                let title = on ? "☀️" : "🌙"
-                if self.statusItem.button?.title != title {
-                    self.statusItem.button?.title = title
-                }
+                self.statusItem.button?.image = Self.iconImage(isOn: on)
             }
             .store(in: &cancellables)
-        dbgLog("StatusBarController: 状态项已创建")
+        dbgLog("StatusBarController: 状态项已创建（SF Symbol 图标）")
+    }
+
+    // 月亮 = 合盖休眠；太阳 = 合盖运行。模板图像自动适配菜单栏深浅色。
+    static func iconImage(isOn: Bool) -> NSImage {
+        let name = isOn ? "sun.max.fill" : "moon.fill"
+        let desc = isOn ? "合盖后继续运行" : "合盖后正常休眠"
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+        let base = NSImage(systemSymbolName: name, accessibilityDescription: desc) ?? NSImage()
+        let image = base.withSymbolConfiguration(config) ?? base
+        image.isTemplate = true
+        return image
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
