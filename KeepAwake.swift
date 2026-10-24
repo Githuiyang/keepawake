@@ -100,15 +100,15 @@ final class KeepAwakeModel: ObservableObject {
         }
     }
 
+    // 读取合盖休眠开关状态。
+    // macOS 26 的 pmset -g/-g custom 不再显示 disablesleep 字段，
+    // 改读 IORegistry 内核真值：IOPMrootDomain 的 SleepDisabled 属性（无需 sudo）。
+    // 注意：ioreg -l 输出约 1.8MB 且含非 UTF-8 二进制字节，直接整包解码会失败，
+    // 必须经 grep 字节级过滤后只取匹配行（纯 ASCII）再判断。
     static func readDisablesSleep() -> Bool {
-        let output = runAndCapture("/usr/bin/pmset", ["-g", "custom"])
-        for rawLine in output.split(separator: "\n") {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("disablesleep") {
-                return line.hasSuffix("1")
-            }
-        }
-        return false
+        let output = runAndCapture("/bin/sh", ["-c",
+            "/usr/sbin/ioreg -c IOPMrootDomain -l | /usr/bin/grep 'SleepDisabled' || true"])
+        return output.contains("= Yes")
     }
 
     static func readIdleSleep() -> String {
