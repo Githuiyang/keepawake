@@ -1,15 +1,21 @@
-// KeepAwake —— 菜单栏「合盖不休眠」开关
+// KeepAwake —— 「合盖休眠 / 合盖运行」开关
 //
-// 开启：pmset -a disablesleep 1  → 合上盖子机器继续运行（发热、耗电增加）
-// 关闭：pmset -a disablesleep 0 + sleep 10 → 恢复正常休眠（修复之前 sleep 0 导致的永不休眠）
+// 三个入口都能切换：
+//   1. 菜单栏文字标签（🌙 合盖休眠 / ☀️ 合盖运行）
+//   2. Dock 图标（月亮）点击弹出小面板
+//   3. 启动时自动弹出面板
 //
-// 权限：修改 pmset 需要 root。优先尝试免密 sudo（若配置过 sudoers.d/keepawake），
-// 失败则弹系统管理员密码框（osascript with administrator privileges）。
+// 开启：pmset -a disablesleep 1            → 合盖继续运行（发热耗电增加）
+// 关闭：pmset -a disablesleep 0 + sleep 10 → 恢复正常休眠
+//
+// 权限：优先免密 sudo（配置过 sudoers.d/keepawake），失败弹系统密码框。
 
 import AppKit
 import SwiftUI
 
 final class KeepAwakeModel: ObservableObject {
+    static let shared = KeepAwakeModel()
+
     @Published var isOn = false
     @Published var idleSleepText = "?"
     @Published var busy = false
@@ -85,13 +91,11 @@ final class KeepAwakeModel: ObservableObject {
         var first = true
         for rawLine in output.split(separator: "\n") {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("sleep ") {
+            if line.hasPrefix("sleep ") && first {
+                first = false
                 let value = line.replacingOccurrences(of: "sleep", with: "").trimmingCharacters(in: .whitespaces)
-                if first {
-                    first = false
-                    if value == "0" { return "永不（耗电根源）" }
-                    return "\(value) 分钟"
-                }
+                if value == "0" { return "永不（耗电根源）" }
+                return "\(value) 分钟"
             }
         }
         return "?"
@@ -147,38 +151,114 @@ final class KeepAwakeModel: ObservableObject {
     }
 }
 
-@main
-struct KeepAwakeApp: App {
-    @StateObject private var model = KeepAwakeModel()
+// MARK: - 主面板（Dock 点击 / 启动时弹出）
 
-    var body: some Scene {
-        MenuBarExtra {
+struct MainView: View {
+    @ObservedObject var model: KeepAwakeModel
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text(model.isOn ? "☀️ 合盖后继续运行" : "🌙 合盖后正常休眠")
+                .font(.title3.weight(.semibold))
+
+            Text(model.isOn
+                 ? "合上盖子电脑不会睡。注意发热耗电，用完切回。"
+                 : "合上盖子电脑正常休眠，省电。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
             if model.busy {
-                Text("正在切换…")
+                ProgressView()
+                    .controlSize(.small)
             } else {
-                Button(model.isOn ? "关闭合盖不休眠" : "开启合盖不休眠") {
+                Button(model.isOn ? "切换为：合盖休眠" : "切换为：合盖运行") {
                     model.toggle()
                 }
+                .controlSize(.large)
             }
-            Divider()
-            Text(model.isOn ? "状态：● 合盖继续运行中" : "状态：○ 正常休眠（合盖即睡）")
-            Text("空闲休眠：\(model.idleSleepText)")
+
             if model.idleSleepText.hasPrefix("永不") {
                 Button("修复：空闲休眠恢复为 10 分钟") {
                     model.restoreIdleSleep()
                 }
+                .controlSize(.small)
             }
+
             if let error = model.lastError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(24)
+        .frame(width: 340)
+    }
+}
+
+// MARK: - App
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var panel: NSPanel?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.applicationIconImage = NSImage(
+            systemSymbolName: "moon.circle.fill",
+            accessibilityDescription: "KeepAwake"
+        )
+
+        let controller = NSHostingController(rootView: MainView(model: .shared))
+        let newPanel = NSPanel(contentViewController: controller)
+        newPanel.title = "合盖开关"
+        newPanel.styleMask = [.titled, .closable, .miniaturizable]
+        newPanel.isReleasedWhenClosed = false
+        newPanel.center()
+        newPanel.makeKeyAndOrderFront(nil)
+        self.panel = newPanel
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // Dock 图标被点击时重新打开面板
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            panel?.makeKeyAndOrderFront(nil)
+        }
+        return true
+    }
+}
+
+@main
+struct KeepAwakeApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    var body: some Scene {
+        MenuBarExtra {
+            if KeepAwakeModel.shared.busy {
+                Text("正在切换…")
+            } else {
+                Button(KeepAwakeModel.shared.isOn ? "改为：合盖后正常休眠" : "改为：合盖后继续运行") {
+                    KeepAwakeModel.shared.toggle()
+                }
+            }
+            Divider()
+            Text(KeepAwakeModel.shared.isOn ? "当前：● 合盖后继续运行" : "当前：○ 合盖后正常休眠")
+            Text("空闲休眠：\(KeepAwakeModel.shared.idleSleepText)")
+            if KeepAwakeModel.shared.idleSleepText.hasPrefix("永不") {
+                Button("修复：空闲休眠恢复为 10 分钟") {
+                    KeepAwakeModel.shared.restoreIdleSleep()
+                }
+            }
+            if let error = KeepAwakeModel.shared.lastError {
                 Divider()
                 Text(error)
             }
             Divider()
-            Text("开启时会发热耗电，用完记得关")
+            Text("合盖运行会发热耗电，用完记得切回")
             Button("退出") {
                 NSApplication.shared.terminate(nil)
             }
         } label: {
-            Image(systemName: model.isOn ? "sun.max.fill" : "moon")
+            Text(KeepAwakeModel.shared.isOn ? "☀️ 合盖运行" : "🌙 合盖休眠")
         }
         .menuBarExtraStyle(.menu)
     }
