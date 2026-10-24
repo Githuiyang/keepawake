@@ -1,19 +1,14 @@
-// KeepAwake —— 「灵动岛」式合盖开关
+// KeepAwake —— 「灵动岛」式合盖开关（哥特祭坛画配色版）
 //
-// 平时完全隐形。鼠标移到屏幕顶部中央（刘海区域）时，
-// 刘海正下方浮现深色胶囊：🌙 合盖休眠 / ☀️ 合盖运行，点击切换，移开淡出。
+// 交互：平时隐形，鼠标移到刘海区域 → 浮现胶囊；点击免密切换；移开淡出。
 //
-// 实现要点：
-// - 悬浮 NSPanel（borderless + nonactivating），窗口常驻但 alpha=0、
-//   ignoresMouseEvents=true → 隐形时零拦截，不挡任何点击
-// - 0.25s 轮询 NSEvent.mouseLocation 判断是否进入刘海感应区，
-//   进入→显示并开启鼠标事件；离开→淡出并恢复穿透
-// - 状态切换后胶囊自动闪现 1.6 秒给反馈（无需悬停）
-// - 右键胶囊：修复空闲休眠 / 退出
-// - 不再创建菜单栏状态项（用户要求平时隐藏）
+// 设计：意大利哥特艺术配色 ——
+//   休眠 = 群青夜（青金石蓝渐变 + 金月 + 闪烁星光）
+//   运行 = 朱砂昼（vermilion 渐变 + 金日 + 呼吸脉动）
+//   描边金箔、文字象牙白、主词衬线体（祭坛画手稿感）
 //
-// 免密（sudoers.d/keepawake 已配置）：
-//   开 = pmset -a disablesleep 1
+// 底层（免密，sudoers.d/keepawake）：
+//   开 = pmset -a disablesleep 1（状态读 IORegistry SleepDisabled）
 //   关 = pmset -a disablesleep 0 + sleep 10
 
 import AppKit
@@ -188,27 +183,151 @@ final class KeepAwakeModel: ObservableObject {
     }
 }
 
-// MARK: - 胶囊视图（刘海下方的深色小岛）
+// MARK: - 灵动岛显隐状态（供胶囊做进出场动画）
+
+final class IslandViewModel: ObservableObject {
+    @Published var visible = false
+    @Published var hovered = false
+}
+
+// MARK: - 哥特配色
+
+private enum GothicPalette {
+    static let gold = Color(red: 0.90, green: 0.76, blue: 0.42)        // 金箔
+    static let goldLight = Color(red: 0.96, green: 0.87, blue: 0.62)   // 亮金
+    static let ivory = Color(red: 0.95, green: 0.91, blue: 0.84)       // 象牙白
+    // 群青夜（青金石 → 午夜）
+    static let nightTop = Color(red: 0.18, green: 0.20, blue: 0.40)
+    static let nightBottom = Color(red: 0.05, green: 0.06, blue: 0.18)
+    // 朱砂昼（vermilion → 深绯）
+    static let fireTop = Color(red: 0.70, green: 0.16, blue: 0.10)
+    static let fireBottom = Color(red: 0.33, green: 0.05, blue: 0.04)
+}
+
+// MARK: - 图标（带自主动画）
+
+private struct MoonIcon: View {
+    var body: some View {
+        Image(systemName: "moon.stars.fill")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(GothicPalette.gold)
+            .rotationEffect(.degrees(-14))
+    }
+}
+
+private struct SunIcon: View {
+    @State private var breathing = false
+    var body: some View {
+        Image(systemName: "sun.max.fill")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(GothicPalette.gold)
+            .scaleEffect(breathing ? 1.12 : 0.94)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
+                    breathing = true
+                }
+            }
+    }
+}
+
+private struct TwinkleStar: View {
+    let delay: Double
+    @State private var lit = false
+    var body: some View {
+        Image(systemName: "sparkle")
+            .font(.system(size: 6))
+            .foregroundStyle(GothicPalette.goldLight.opacity(0.9))
+            .opacity(lit ? 0.95 : 0.20)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true).delay(delay)) {
+                    lit = true
+                }
+            }
+    }
+}
+
+// MARK: - 胶囊视图
 
 struct PillView: View {
     @ObservedObject var model: KeepAwakeModel
+    @ObservedObject var island: IslandViewModel
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: model.isOn ? "sun.max.fill" : "moon.fill")
-                .imageScale(.small)
-            if model.busy {
-                Text("正在切换…").font(.system(size: 12, weight: .medium))
-            } else {
-                Text(model.isOn ? "合盖运行中 · 点击切回休眠" : "合盖休眠 · 点击切换运行")
-                    .font(.system(size: 12, weight: .medium))
+        let isNight = !model.isOn
+
+        HStack(spacing: 10) {
+            // 图标：月/日 切换时缩放淡入
+            ZStack {
+                if isNight {
+                    MoonIcon()
+                        .transition(.scale(scale: 0.3).combined(with: .opacity))
+                } else {
+                    SunIcon()
+                        .transition(.scale(scale: 0.3).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.4, dampingFraction: 0.7), value: model.isOn)
+
+            // 主词（衬线体，手稿感）
+            VStack(alignment: .leading, spacing: 1) {
+                Text(model.busy ? "正在切换…" : (isNight ? "合盖休眠" : "合盖运行中"))
+                    .font(.system(size: 12.5, weight: .semibold, design: .serif))
+                    .foregroundStyle(GothicPalette.ivory)
+                Text(isNight ? "轻点切换 · 合盖继续运行" : "轻点切回 · 恢复正常休眠")
+                    .font(.system(size: 9))
+                    .foregroundStyle(GothicPalette.ivory.opacity(0.62))
+            }
+
+            if isNight && !model.busy {
+                HStack(spacing: 5) {
+                    TwinkleStar(delay: 0.0)
+                    TwinkleStar(delay: 0.5)
+                    TwinkleStar(delay: 1.0)
+                }
+                .padding(.trailing, 2)
             }
         }
-        .foregroundStyle(.white)
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Capsule().fill(Color.black.opacity(0.82)))
+        // 背景渐变：群青夜 / 朱砂昼，切换时 0.5s 交叉过渡
+        .background(
+            ZStack {
+                Capsule().fill(
+                    LinearGradient(
+                        colors: isNight
+                            ? [GothicPalette.nightTop, GothicPalette.nightBottom]
+                            : [GothicPalette.fireTop, GothicPalette.fireBottom],
+                        startPoint: .top, endPoint: .bottom)
+                )
+                // 顶部微光（祭坛金箔的高光感）
+                Capsule().fill(
+                    LinearGradient(
+                        colors: [.white.opacity(0.10), .clear],
+                        startPoint: .top, endPoint: .center)
+                )
+            }
+            .animation(.easeInOut(duration: 0.5), value: model.isOn)
+        )
+        // 金箔描边
+        .overlay(
+            Capsule().strokeBorder(
+                LinearGradient(
+                    colors: [GothicPalette.goldLight, GothicPalette.gold, GothicPalette.gold.opacity(0.5)],
+                    startPoint: .top, endPoint: .bottom),
+                lineWidth: 1
+            )
+        )
+        // 投影：黑影 + 金晕
+        .shadow(color: .black.opacity(0.38), radius: 7, y: 2)
+        .shadow(color: GothicPalette.gold.opacity(isNight ? 0.22 : 0.38), radius: 8)
         .contentShape(Rectangle())
+        // 进出场：缩放 + 位移 + 模糊渐显（有质感的弹簧）
+        .scaleEffect(island.visible ? (island.hovered ? 1.045 : 1.0) : 0.82)
+        .offset(y: island.visible ? 0 : -5)
+        .blur(radius: island.visible ? 0 : 2.2)
+        .animation(.spring(response: 0.42, dampingFraction: 0.76), value: island.visible)
+        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: island.hovered)
+        .onHover { island.hovered = $0 }
         .onTapGesture { model.toggle() }
     }
 }
@@ -227,12 +346,13 @@ final class PillHostingView<Content: View>: NSHostingView<Content> {
 final class DynamicIslandController: NSObject {
     private var panel: NSPanel!
     private let model = KeepAwakeModel.shared
+    private let islandVM = IslandViewModel()
     private var pollTimer: Timer?
     private var visible = false
     private var flashUntil = Date.distantPast
     private var cancellables = Set<AnyCancellable>()
 
-    // 悬停感应区：刘海及其正下方（宽 280 × 高 50，横跨顶部中央）
+    // 悬停感应区：刘海及其正下方
     private var revealRect: NSRect {
         guard let screen = NSScreen.main else { return .zero }
         let w: CGFloat = 280
@@ -244,13 +364,13 @@ final class DynamicIslandController: NSObject {
 
     func install() {
         guard let screen = NSScreen.main else { return }
-        let width: CGFloat = 260
-        let height: CGFloat = 28
+        let width: CGFloat = 268
+        let height: CGFloat = 30
         let frame = NSRect(x: screen.frame.midX - width / 2,
                            y: screen.frame.maxY - 24 - height,  // 紧贴菜单栏下沿 = 刘海正下方
                            width: width, height: height)
 
-        let hosting = PillHostingView(rootView: PillView(model: model))
+        let hosting = PillHostingView(rootView: PillView(model: model, island: islandVM))
         hosting.onRightClick = { [weak self] in self?.showMenu() }
 
         panel = NSPanel(contentRect: frame,
@@ -281,7 +401,7 @@ final class DynamicIslandController: NSObject {
     }
 
     private func flash() {
-        flashUntil = Date().addingTimeInterval(1.6)
+        flashUntil = Date().addingTimeInterval(1.8)
         updateVisibility()
     }
 
@@ -296,8 +416,10 @@ final class DynamicIslandController: NSObject {
         guard show != visible else { return }
         visible = show
         panel.ignoresMouseEvents = !show
+        islandVM.visible = show
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.15
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = show ? 1 : 0
         })
     }
@@ -356,7 +478,7 @@ final class DynamicIslandController: NSObject {
 @main
 enum KeepAwakeMain {
     static func main() {
-        dbgLog("=== KeepAwake 启动（灵动岛模式）===")
+        dbgLog("=== KeepAwake 启动（哥特配色灵动岛）===")
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
