@@ -1,11 +1,12 @@
-// KeepAwake —— 「灵动岛」式合盖开关（哥特祭坛画配色版）
+// KeepAwake —— 「灵动岛」式合盖开关（Anthropic 风格暗色控制台）
 //
-// 交互：平时隐形，鼠标移到刘海区域 → 浮现胶囊；点击免密切换；移开淡出。
+// 交互：平时隐形，鼠标移到刘海区域 → 浮现控制台卡片；点击免密切换；移开淡出；右键菜单。
 //
-// 设计：意大利哥特艺术配色 ——
-//   休眠 = 群青夜（青金石蓝渐变 + 金月 + 闪烁星光）
-//   运行 = 朱砂昼（vermilion 渐变 + 金日 + 呼吸脉动）
-//   描边金箔、文字象牙白、主词衬线体（祭坛画手稿感）
+// 视觉：Anthropic/Claude 终端控制台语言 ——
+//   暖调深灰半透明圆角卡片、细边框、柔和阴影；
+//   米白衬线标题 + mono 信息行；品牌橙 #D97757 只做点睛
+//   （运行态状态点/ON 徽标/边框微染），微弱辉光不霓虹。
+//   休眠 = 一切归于暖灰安静；运行 = 橙色点亮。
 //
 // 底层（免密，sudoers.d/keepawake）：
 //   开 = pmset -a disablesleep 1（状态读 IORegistry SleepDisabled）
@@ -183,150 +184,111 @@ final class KeepAwakeModel: ObservableObject {
     }
 }
 
-// MARK: - 灵动岛显隐状态（供胶囊做进出场动画）
+// MARK: - 灵动岛显隐状态（供卡片做进出场动画）
 
 final class IslandViewModel: ObservableObject {
     @Published var visible = false
     @Published var hovered = false
 }
 
-// MARK: - 哥特配色
+// MARK: - Anthropic 风格暗色控制台配色
 
-private enum GothicPalette {
-    static let gold = Color(red: 0.90, green: 0.76, blue: 0.42)        // 金箔
-    static let goldLight = Color(red: 0.96, green: 0.87, blue: 0.62)   // 亮金
-    static let ivory = Color(red: 0.95, green: 0.91, blue: 0.84)       // 象牙白
-    // 群青夜（青金石 → 午夜）
-    static let nightTop = Color(red: 0.18, green: 0.20, blue: 0.40)
-    static let nightBottom = Color(red: 0.05, green: 0.06, blue: 0.18)
-    // 朱砂昼（vermilion → 深绯）
-    static let fireTop = Color(red: 0.70, green: 0.16, blue: 0.10)
-    static let fireBottom = Color(red: 0.33, green: 0.05, blue: 0.04)
+private enum ConsolePalette {
+    static let cream = Color(red: 0.98, green: 0.97, blue: 0.95)   // 米白（Anthropic ivory）
+    static let warmGray = Color(red: 0.66, green: 0.64, blue: 0.61) // 低饱和暖灰
+    static let accent = Color(red: 0.85, green: 0.47, blue: 0.34)   // 品牌橙 #D97757
+    static let cardBG = Color(red: 0.15, green: 0.15, blue: 0.14)   // 暖调深灰（非纯黑）
+    static let hairline = Color.white.opacity(0.09)                  // 细边框
+    static let dotDim = Color(red: 0.42, green: 0.41, blue: 0.39)    // 休眠态状态点
 }
 
-// MARK: - 图标（带自主动画）
-
-private struct MoonIcon: View {
-    var body: some View {
-        Image(systemName: "moon.stars.fill")
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(GothicPalette.gold)
-            .rotationEffect(.degrees(-14))
-    }
-}
-
-private struct SunIcon: View {
+// 运行态的呼吸状态点（微弱橙色辉光，不霓虹）
+private struct StatusDot: View {
+    let isOn: Bool
     @State private var breathing = false
     var body: some View {
-        Image(systemName: "sun.max.fill")
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(GothicPalette.gold)
-            .scaleEffect(breathing ? 1.12 : 0.94)
+        Circle()
+            .fill(isOn ? ConsolePalette.accent : ConsolePalette.dotDim)
+            .frame(width: 7, height: 7)
+            .shadow(color: isOn ? ConsolePalette.accent.opacity(breathing ? 0.55 : 0.25) : .clear,
+                    radius: isOn ? 5 : 0)
             .onAppear {
-                withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
+                guard isOn else { return }
+                withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
                     breathing = true
                 }
             }
     }
 }
 
-private struct TwinkleStar: View {
-    let delay: Double
-    @State private var lit = false
-    var body: some View {
-        Image(systemName: "sparkle")
-            .font(.system(size: 6))
-            .foregroundStyle(GothicPalette.goldLight.opacity(0.9))
-            .opacity(lit ? 0.95 : 0.20)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true).delay(delay)) {
-                    lit = true
-                }
-            }
-    }
-}
-
-// MARK: - 胶囊视图
+// MARK: - 控制台卡片
 
 struct PillView: View {
     @ObservedObject var model: KeepAwakeModel
     @ObservedObject var island: IslandViewModel
 
     var body: some View {
-        let isNight = !model.isOn
+        let isOn = model.isOn
 
-        HStack(spacing: 10) {
-            // 图标：月/日 切换时缩放淡入
-            ZStack {
-                if isNight {
-                    MoonIcon()
-                        .transition(.scale(scale: 0.3).combined(with: .opacity))
-                } else {
-                    SunIcon()
-                        .transition(.scale(scale: 0.3).combined(with: .opacity))
+        HStack(spacing: 12) {
+            StatusDot(isOn: isOn)
+                .animation(.easeInOut(duration: 0.4), value: isOn)
+
+            VStack(alignment: .leading, spacing: 2) {
+                // 衬线大标题（安静、克制）
+                Text(model.busy ? "切换中…" : (isOn ? "合盖运行中" : "合盖休眠"))
+                    .font(.system(size: 16, weight: .semibold, design: .serif))
+                    .foregroundStyle(ConsolePalette.cream)
+                // mono 信息行：命令语义 + 关键字用橙色点睛
+                HStack(spacing: 0) {
+                    Text("pmset disablesleep ")
+                        .foregroundStyle(ConsolePalette.warmGray)
+                    Text(isOn ? "on" : "off")
+                        .foregroundStyle(isOn ? ConsolePalette.accent : ConsolePalette.warmGray)
+                    Text("  ·  ")
+                        .foregroundStyle(ConsolePalette.warmGray.opacity(0.6))
+                    Text(isOn ? "lid close keeps running" : "click to keep running")
+                        .foregroundStyle(ConsolePalette.warmGray)
                 }
-            }
-            .animation(.spring(response: 0.4, dampingFraction: 0.7), value: model.isOn)
-
-            // 主词（衬线体，手稿感）
-            VStack(alignment: .leading, spacing: 1) {
-                Text(model.busy ? "正在切换…" : (isNight ? "合盖休眠" : "合盖运行中"))
-                    .font(.system(size: 12.5, weight: .semibold, design: .serif))
-                    .foregroundStyle(GothicPalette.ivory)
-                Text(isNight ? "轻点切换 · 合盖继续运行" : "轻点切回 · 恢复正常休眠")
-                    .font(.system(size: 9))
-                    .foregroundStyle(GothicPalette.ivory.opacity(0.62))
+                .font(.system(size: 8.5, weight: .regular, design: .monospaced))
             }
 
-            if isNight && !model.busy {
-                HStack(spacing: 5) {
-                    TwinkleStar(delay: 0.0)
-                    TwinkleStar(delay: 0.5)
-                    TwinkleStar(delay: 1.0)
-                }
-                .padding(.trailing, 2)
-            }
+            Spacer(minLength: 8)
+
+            // 大号 mono 徽标（视觉锚点，ON 橙 / OFF 暖灰）
+            Text(isOn ? "ON" : "OFF")
+                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                .tracking(1.5)
+                .foregroundStyle(isOn ? ConsolePalette.accent : ConsolePalette.warmGray.opacity(0.7))
+                .opacity(model.busy ? 0.4 : 1)
+                .animation(.easeInOut(duration: 0.35), value: isOn)
         }
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // 背景渐变：群青夜 / 朱砂昼，切换时 0.5s 交叉过渡
+        .padding(.horizontal, 15)
+        .frame(width: 300, height: 44)
+        // 半透明暖灰圆角卡片 + 细边框（运行态边框微染橙色）
         .background(
-            ZStack {
-                Capsule().fill(
-                    LinearGradient(
-                        colors: isNight
-                            ? [GothicPalette.nightTop, GothicPalette.nightBottom]
-                            : [GothicPalette.fireTop, GothicPalette.fireBottom],
-                        startPoint: .top, endPoint: .bottom)
-                )
-                // 顶部微光（祭坛金箔的高光感）
-                Capsule().fill(
-                    LinearGradient(
-                        colors: [.white.opacity(0.10), .clear],
-                        startPoint: .top, endPoint: .center)
-                )
-            }
-            .animation(.easeInOut(duration: 0.5), value: model.isOn)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(ConsolePalette.cardBG.opacity(isOn ? 0.92 : 0.86))
+                .animation(.easeInOut(duration: 0.4), value: isOn)
         )
-        // 金箔描边
         .overlay(
-            Capsule().strokeBorder(
-                LinearGradient(
-                    colors: [GothicPalette.goldLight, GothicPalette.gold, GothicPalette.gold.opacity(0.5)],
-                    startPoint: .top, endPoint: .bottom),
-                lineWidth: 1
-            )
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(isOn ? ConsolePalette.accent.opacity(0.28) : ConsolePalette.hairline,
+                              lineWidth: 1)
+                .animation(.easeInOut(duration: 0.4), value: isOn)
         )
-        // 投影：黑影 + 金晕
-        .shadow(color: .black.opacity(0.38), radius: 7, y: 2)
-        .shadow(color: GothicPalette.gold.opacity(isNight ? 0.22 : 0.38), radius: 8)
-        .contentShape(Rectangle())
-        // 进出场：缩放 + 位移 + 模糊渐显（有质感的弹簧）
-        .scaleEffect(island.visible ? (island.hovered ? 1.045 : 1.0) : 0.82)
+        // 柔和阴影 + 运行态微弱橙晕
+        .shadow(color: .black.opacity(0.40), radius: 10, y: 3)
+        .shadow(color: ConsolePalette.accent.opacity(isOn ? 0.18 : 0), radius: 9)
+        // 进出场：弹簧缩放 + 上浮 + 模糊渐显
+        .scaleEffect(island.visible ? (island.hovered ? 1.03 : 1.0) : 0.86)
         .offset(y: island.visible ? 0 : -5)
-        .blur(radius: island.visible ? 0 : 2.2)
-        .animation(.spring(response: 0.42, dampingFraction: 0.76), value: island.visible)
+        .blur(radius: island.visible ? 0 : 2.0)
+        .animation(.spring(response: 0.42, dampingFraction: 0.78), value: island.visible)
         .animation(.spring(response: 0.28, dampingFraction: 0.8), value: island.hovered)
+        // 居中于面板全域；悬停/点击覆盖整卡
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
         .onHover { island.hovered = $0 }
         .onTapGesture { model.toggle() }
     }
@@ -355,8 +317,8 @@ final class DynamicIslandController: NSObject {
     // 悬停感应区：刘海及其正下方
     private var revealRect: NSRect {
         guard let screen = NSScreen.main else { return .zero }
-        let w: CGFloat = 280
-        let h: CGFloat = 50
+        let w: CGFloat = 320
+        let h: CGFloat = 55
         return NSRect(x: screen.frame.midX - w / 2,
                       y: screen.frame.maxY - h,
                       width: w, height: h)
@@ -364,13 +326,20 @@ final class DynamicIslandController: NSObject {
 
     func install() {
         guard let screen = NSScreen.main else { return }
-        let width: CGFloat = 268
-        let height: CGFloat = 30
+        // 面板比卡片大一圈：卡片 300x44，面板 352x60，
+        // 余量留给悬停放大(1.03x)、阴影和橙晕，防止边缘被窗口裁剪
+        let width: CGFloat = 352
+        let height: CGFloat = 60
         let frame = NSRect(x: screen.frame.midX - width / 2,
                            y: screen.frame.maxY - 24 - height,  // 紧贴菜单栏下沿 = 刘海正下方
                            width: width, height: height)
 
         let hosting = PillHostingView(rootView: PillView(model: model, island: islandVM))
+        hosting.frame = NSRect(origin: .zero, size: frame.size)
+        hosting.autoresizingMask = [.width, .height]
+        if #available(macOS 13.0, *) {
+            hosting.sizingOptions = []
+        }
         hosting.onRightClick = { [weak self] in self?.showMenu() }
 
         panel = NSPanel(contentRect: frame,
@@ -478,7 +447,7 @@ final class DynamicIslandController: NSObject {
 @main
 enum KeepAwakeMain {
     static func main() {
-        dbgLog("=== KeepAwake 启动（哥特配色灵动岛）===")
+        dbgLog("=== KeepAwake 启动（Anthropic 控制台风）===")
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
