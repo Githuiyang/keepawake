@@ -1,16 +1,32 @@
 // KeepAwake —— 菜单栏常驻「合盖休眠 / 合盖运行」开关
 //
-// 菜单栏显示单个 emoji（🌙=合盖休眠 / ☀️=合盖运行），最小宽度，
-// 避免在拥挤/有刘海的菜单栏被挤到刘海后面。
-// 支持 ⌘ 拖动换位，autosaveName 记住位置（重启后保持在原地）。
+// 纯 AppKit 实现（不依赖 SwiftUI 生命周期）：
+// SwiftUI Settings{EmptyView()} 空场景下 NSStatusItem 可能不被创建
+// （实测 Quartz 无窗口），改为经典 AppKit 模式确保状态项一定生成。
 //
-// 底层（免密，sudoers.d/keepawake 已配置）：
-//   开 = pmset -a disablesleep 1
-//   关 = pmset -a disablesleep 0 + sleep 10（恢复正常休眠）
+// 菜单栏显示单个 emoji（🌙=合盖休眠 / ☀️=合盖运行），
+// 支持 ⌘ 拖动换位（autosaveName 记住位置）。
+// 免密（sudoers.d/keepawake 已配置）。
 
 import AppKit
 import Combine
-import SwiftUI
+
+func dbgLog(_ message: String) {
+    let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
+    let line = "\(stamp)  \(message)\n"
+    let path = "/tmp/keepawake_debug.log"
+    if let handle = FileHandle(forWritingAtPath: path) {
+        handle.seekToEndOfFile()
+        if let data = line.data(using: .utf8) {
+            handle.write(data)
+        }
+        try? handle.close()
+    } else {
+        try? line.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+}
+
+// MARK: - 状态模型
 
 final class KeepAwakeModel: ObservableObject {
     static let shared = KeepAwakeModel()
@@ -27,6 +43,7 @@ final class KeepAwakeModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+        dbgLog("Model init: isOn=\(isOn)")
     }
 
     deinit { timer?.invalidate() }
@@ -40,6 +57,7 @@ final class KeepAwakeModel: ObservableObject {
         guard !busy else { return }
         busy = true
         let target = !isOn
+        dbgLog("toggle → \(target)")
         DispatchQueue.global(qos: .userInitiated).async {
             let ok = Self.setDisablesSleep(target)
             DispatchQueue.main.async {
@@ -50,6 +68,7 @@ final class KeepAwakeModel: ObservableObject {
                 } else {
                     self.lastError = "设置失败：可能取消了管理员密码输入"
                 }
+                dbgLog("toggle done ok=\(ok) isOn=\(self.isOn)")
             }
         }
     }
@@ -98,7 +117,6 @@ final class KeepAwakeModel: ObservableObject {
         return "?"
     }
 
-    // 免密路径必须直接调 /usr/bin/pmset（与 sudoers 规则逐字匹配）。
     static func setDisablesSleep(_ on: Bool) -> Bool {
         if on {
             if runPasswordless(["/usr/bin/pmset", "-a", "disablesleep", "1"]) {
@@ -161,7 +179,7 @@ final class KeepAwakeModel: ObservableObject {
     }
 }
 
-// MARK: - 原生状态栏项（单 emoji + 位置记忆）
+// MARK: - 状态栏图标
 
 final class StatusBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
@@ -171,7 +189,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     override init() {
         super.init()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // 记住 ⌘ 拖动后的位置，重启后保持
         statusItem.autosaveName = "KeepAwakeStatusItem"
         statusItem.button?.title = model.isOn ? "☀️" : "🌙"
 
@@ -189,9 +206,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 }
             }
             .store(in: &cancellables)
+        dbgLog("StatusBarController: 状态项已创建")
     }
 
-    // 每次点开菜单时重建内容（状态实时）
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
@@ -253,21 +270,26 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func quitAction() { NSApp.terminate(nil) }
 }
 
-// MARK: - App
+// MARK: - 纯 AppKit 入口（不经 SwiftUI）
+
+@main
+enum KeepAwakeMain {
+    static func main() {
+        dbgLog("=== KeepAwake 启动（纯 AppKit）===")
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        // 菜单栏专用应用：无 Dock 图标（与 LSUIElement 双保险）
+        app.setActivationPolicy(.accessory)
+        app.run()
+    }
+}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: StatusBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        dbgLog("applicationDidFinishLaunching 触发")
         controller = StatusBarController()
-    }
-}
-
-@main
-struct KeepAwakeApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
-    var body: some Scene {
-        Settings { EmptyView() }
     }
 }
