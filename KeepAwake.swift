@@ -60,7 +60,8 @@ final class KeepAwakeModel: ObservableObject {
         guard !busy else { return }
         busy = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let ok = Self.runAdminShell("pmset -a sleep 10")
+            let ok = Self.runPasswordless(["/usr/bin/pmset", "-a", "sleep", "10"])
+                || Self.runAdminShell("pmset -a sleep 10")
             DispatchQueue.main.async {
                 self.busy = false
                 if ok {
@@ -101,12 +102,28 @@ final class KeepAwakeModel: ObservableObject {
         return "?"
     }
 
-    // 设置：先试免密 sudo（配置过 sudoers 时零弹窗），失败则弹系统密码框
+    // 设置：优先免密 sudo（配置过 sudoers.d/keepawake 时零弹窗），
+    // 免密不可用时退回 osascript 弹系统密码框。
+    // 注意：免密路径必须直接调 /usr/bin/pmset（与 sudoers 规则逐字匹配），
+    // 不能套 sh -c，否则 sudoers 匹配不上。
     static func setDisablesSleep(_ on: Bool) -> Bool {
-        let cmd = on
-            ? "pmset -a disablesleep 1"
-            : "pmset -a disablesleep 0; pmset -a sleep 10"
-        return runAdminShell(cmd)
+        if on {
+            if runPasswordless(["/usr/bin/pmset", "-a", "disablesleep", "1"]) {
+                return true
+            }
+            return runAdminShell("pmset -a disablesleep 1")
+        } else {
+            let ok1 = runPasswordless(["/usr/bin/pmset", "-a", "disablesleep", "0"])
+            let ok2 = runPasswordless(["/usr/bin/pmset", "-a", "sleep", "10"])
+            if ok1 && ok2 {
+                return true
+            }
+            return runAdminShell("pmset -a disablesleep 0; pmset -a sleep 10")
+        }
+    }
+
+    static func runPasswordless(_ args: [String]) -> Bool {
+        runAndCheck("/usr/bin/sudo", ["-n"] + args)
     }
 
     static func runAdminShell(_ cmd: String) -> Bool {

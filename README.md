@@ -30,21 +30,23 @@
 
 系统设置 → 通用 → 登录项与扩展 → 添加 `KeepAwake.app`。
 
-## 免密切换（可选）
+## 免密切换（已配置）
 
-默认每次切换要输管理员密码。想零弹窗，配置 sudoers 只放行这两条 pmset 命令：
-
-```bash
-sudo visudo -f /etc/sudoers.d/keepawake
-```
-
-写入一行（把 lihuiyang 换成你的用户名）：
+2026-10-12 已配置 `/etc/sudoers.d/keepawake`，只放行 3 条 pmset 命令，
+切换**不再弹密码**，其他任何 sudo 命令照常要密码：
 
 ```
 lihuiyang ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a sleep 10
 ```
 
-保存后工具自动走免密路径（先试 `sudo -n`，成功就不再弹密码框）。
+如果想撤掉免密：
+
+```bash
+sudo rm /etc/sudoers.d/keepawake
+```
+
+注意：免密路径必须直接调用 `/usr/bin/pmset`（与规则逐字匹配），
+不能套 `sh -c`，代码里已按此实现。
 
 ## 重新构建
 
