@@ -209,9 +209,9 @@ private struct StatusDot: View {
     var body: some View {
         Circle()
             .fill(isOn ? ConsolePalette.accent : ConsolePalette.dotDim)
-            .frame(width: 7, height: 7)
+            .frame(width: 5, height: 5)
             .shadow(color: isOn ? ConsolePalette.accent.opacity(breathing ? 0.55 : 0.25) : .clear,
-                    radius: isOn ? 5 : 0)
+                    radius: isOn ? 3.5 : 0)
             .onAppear {
                 guard isOn else { return }
                 withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
@@ -230,58 +230,41 @@ struct PillView: View {
     var body: some View {
         let isOn = model.isOn
 
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             StatusDot(isOn: isOn)
                 .animation(.easeInOut(duration: 0.4), value: isOn)
 
-            VStack(alignment: .leading, spacing: 2) {
-                // 衬线大标题（安静、克制）
-                Text(model.busy ? "切换中…" : (isOn ? "合盖运行中" : "合盖休眠"))
-                    .font(.system(size: 16, weight: .semibold, design: .serif))
-                    .foregroundStyle(ConsolePalette.cream)
-                // mono 信息行：命令语义 + 关键字用橙色点睛
-                HStack(spacing: 0) {
-                    Text("pmset disablesleep ")
-                        .foregroundStyle(ConsolePalette.warmGray)
-                    Text(isOn ? "on" : "off")
-                        .foregroundStyle(isOn ? ConsolePalette.accent : ConsolePalette.warmGray)
-                    Text("  ·  ")
-                        .foregroundStyle(ConsolePalette.warmGray.opacity(0.6))
-                    Text(isOn ? "lid close keeps running" : "click to keep running")
-                        .foregroundStyle(ConsolePalette.warmGray)
-                }
-                .font(.system(size: 8.5, weight: .regular, design: .monospaced))
-            }
+            Text(model.busy ? "切换中…" : (isOn ? "合盖运行中" : "合盖休眠"))
+                .font(.system(size: 11, weight: .semibold, design: .serif))
+                .foregroundStyle(ConsolePalette.cream)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
-            // 大号 mono 徽标（视觉锚点，ON 橙 / OFF 暖灰）
             Text(isOn ? "ON" : "OFF")
-                .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                .tracking(1.5)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .tracking(1)
                 .foregroundStyle(isOn ? ConsolePalette.accent : ConsolePalette.warmGray.opacity(0.7))
-                .opacity(model.busy ? 0.4 : 1)
                 .animation(.easeInOut(duration: 0.35), value: isOn)
         }
-        .padding(.horizontal, 15)
-        .frame(width: 300, height: 44)
+        .padding(.horizontal, 10)
+        .frame(width: 176, height: 24)
         // 半透明暖灰圆角卡片 + 细边框（运行态边框微染橙色）
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(ConsolePalette.cardBG.opacity(isOn ? 0.92 : 0.86))
                 .animation(.easeInOut(duration: 0.4), value: isOn)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .strokeBorder(isOn ? ConsolePalette.accent.opacity(0.28) : ConsolePalette.hairline,
                               lineWidth: 1)
                 .animation(.easeInOut(duration: 0.4), value: isOn)
         )
         // 柔和阴影 + 运行态微弱橙晕
-        .shadow(color: .black.opacity(0.40), radius: 10, y: 3)
-        .shadow(color: ConsolePalette.accent.opacity(isOn ? 0.18 : 0), radius: 9)
+        .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+        .shadow(color: ConsolePalette.accent.opacity(isOn ? 0.20 : 0), radius: 6)
         // 进出场：弹簧缩放 + 上浮 + 模糊渐显
-        .scaleEffect(island.visible ? (island.hovered ? 1.03 : 1.0) : 0.86)
+        .scaleEffect(island.visible ? (island.hovered ? 1.05 : 1.0) : 0.86)
         .offset(y: island.visible ? 0 : -5)
         .blur(radius: island.visible ? 0 : 2.0)
         .animation(.spring(response: 0.42, dampingFraction: 0.78), value: island.visible)
@@ -326,10 +309,10 @@ final class DynamicIslandController: NSObject {
 
     func install() {
         guard let screen = NSScreen.main else { return }
-        // 面板比卡片大一圈：卡片 300x44，面板 352x60，
-        // 余量留给悬停放大(1.03x)、阴影和橙晕，防止边缘被窗口裁剪
-        let width: CGFloat = 352
-        let height: CGFloat = 60
+        // 面板比卡片大一圈：卡片 176x24，面板 216x38，
+        // 余量留给悬停放大(1.05x)、阴影和橙晕，防止边缘被窗口裁剪
+        let width: CGFloat = 216
+        let height: CGFloat = 38
         let frame = NSRect(x: screen.frame.midX - width / 2,
                            y: screen.frame.maxY - 24 - height,  // 紧贴菜单栏下沿 = 刘海正下方
                            width: width, height: height)
