@@ -1,15 +1,24 @@
-// KeepAwake —— 菜单栏常驻「合盖休眠 / 合盖运行」开关
+// KeepAwake —— 「灵动岛」式合盖开关
 //
-// 纯 AppKit 实现（不依赖 SwiftUI 生命周期）：
-// SwiftUI Settings{EmptyView()} 空场景下 NSStatusItem 可能不被创建
-// （实测 Quartz 无窗口），改为经典 AppKit 模式确保状态项一定生成。
+// 平时完全隐形。鼠标移到屏幕顶部中央（刘海区域）时，
+// 刘海正下方浮现深色胶囊：🌙 合盖休眠 / ☀️ 合盖运行，点击切换，移开淡出。
 //
-// 菜单栏显示单个 emoji（🌙=合盖休眠 / ☀️=合盖运行），
-// 支持 ⌘ 拖动换位（autosaveName 记住位置）。
-// 免密（sudoers.d/keepawake 已配置）。
+// 实现要点：
+// - 悬浮 NSPanel（borderless + nonactivating），窗口常驻但 alpha=0、
+//   ignoresMouseEvents=true → 隐形时零拦截，不挡任何点击
+// - 0.25s 轮询 NSEvent.mouseLocation 判断是否进入刘海感应区，
+//   进入→显示并开启鼠标事件；离开→淡出并恢复穿透
+// - 状态切换后胶囊自动闪现 1.6 秒给反馈（无需悬停）
+// - 右键胶囊：修复空闲休眠 / 退出
+// - 不再创建菜单栏状态项（用户要求平时隐藏）
+//
+// 免密（sudoers.d/keepawake 已配置）：
+//   开 = pmset -a disablesleep 1
+//   关 = pmset -a disablesleep 0 + sleep 10
 
 import AppKit
 import Combine
+import SwiftUI
 
 func dbgLog(_ message: String) {
     let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
@@ -179,127 +188,190 @@ final class KeepAwakeModel: ObservableObject {
     }
 }
 
-// MARK: - 状态栏图标
+// MARK: - 胶囊视图（刘海下方的深色小岛）
 
-final class StatusBarController: NSObject, NSMenuDelegate {
-    private var statusItem: NSStatusItem!
+struct PillView: View {
+    @ObservedObject var model: KeepAwakeModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: model.isOn ? "sun.max.fill" : "moon.fill")
+                .imageScale(.small)
+            if model.busy {
+                Text("正在切换…").font(.system(size: 12, weight: .medium))
+            } else {
+                Text(model.isOn ? "合盖运行中 · 点击切回休眠" : "合盖休眠 · 点击切换运行")
+                    .font(.system(size: 12, weight: .medium))
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Capsule().fill(Color.black.opacity(0.82)))
+        .contentShape(Rectangle())
+        .onTapGesture { model.toggle() }
+    }
+}
+
+// 承载 SwiftUI 的 NSHostingView，仅用于右键菜单
+final class PillHostingView<Content: View>: NSHostingView<Content> {
+    var onRightClick: (() -> Void)?
+
+    override func rightMouseDown(with event: NSEvent) {
+        onRightClick?()
+    }
+}
+
+// MARK: - 灵动岛控制器
+
+final class DynamicIslandController: NSObject {
+    private var panel: NSPanel!
     private let model = KeepAwakeModel.shared
+    private var pollTimer: Timer?
+    private var visible = false
+    private var flashUntil = Date.distantPast
     private var cancellables = Set<AnyCancellable>()
 
-    override init() {
-        super.init()
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.autosaveName = "KeepAwakeStatusItem"
-        // emoji 作为 button.title 在 macOS 26 上不渲染（占位存在但屏幕空白），
-        // 改用 SF Symbol 图像——原生菜单栏图标的标准机制。
-        statusItem.button?.image = Self.iconImage(isOn: model.isOn)
+    // 悬停感应区：刘海及其正下方（宽 280 × 高 50，横跨顶部中央）
+    private var revealRect: NSRect {
+        guard let screen = NSScreen.main else { return .zero }
+        let w: CGFloat = 280
+        let h: CGFloat = 50
+        return NSRect(x: screen.frame.midX - w / 2,
+                      y: screen.frame.maxY - h,
+                      width: w, height: h)
+    }
 
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
+    func install() {
+        guard let screen = NSScreen.main else { return }
+        let width: CGFloat = 260
+        let height: CGFloat = 28
+        let frame = NSRect(x: screen.frame.midX - width / 2,
+                           y: screen.frame.maxY - 24 - height,  // 紧贴菜单栏下沿 = 刘海正下方
+                           width: width, height: height)
 
+        let hosting = PillHostingView(rootView: PillView(model: model))
+        hosting.onRightClick = { [weak self] in self?.showMenu() }
+
+        panel = NSPanel(contentRect: frame,
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+        panel.contentView = hosting
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        panel.alphaValue = 0
+        panel.ignoresMouseEvents = true
+        panel.orderFrontRegardless()
+
+        // 状态变化时闪现反馈
         model.$isOn
             .receive(on: RunLoop.main)
-            .sink { [weak self] on in
-                guard let self else { return }
-                self.statusItem.button?.image = Self.iconImage(isOn: on)
-            }
+            .dropFirst()
+            .sink { [weak self] _ in self?.flash() }
             .store(in: &cancellables)
-        dbgLog("StatusBarController: 状态项已创建（SF Symbol 图标）")
+
+        // 轮询鼠标位置决定显隐（隐形时窗口穿透，不挡任何操作）
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            self?.updateVisibility()
+        }
+        dbgLog("DynamicIsland: 面板已创建 frame=\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.width))x\(Int(frame.height))，感应区=\(revealRect)")
     }
 
-    // 月亮 = 合盖休眠；太阳 = 合盖运行。模板图像自动适配菜单栏深浅色。
-    static func iconImage(isOn: Bool) -> NSImage {
-        let name = isOn ? "sun.max.fill" : "moon.fill"
-        let desc = isOn ? "合盖后继续运行" : "合盖后正常休眠"
-        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
-        let base = NSImage(systemSymbolName: name, accessibilityDescription: desc) ?? NSImage()
-        let image = base.withSymbolConfiguration(config) ?? base
-        image.isTemplate = true
-        return image
+    private func flash() {
+        flashUntil = Date().addingTimeInterval(1.6)
+        updateVisibility()
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
+    private func updateVisibility() {
+        let mouse = NSEvent.mouseLocation
+        let inside = revealRect.contains(mouse)
+        let shouldShow = inside || Date() < flashUntil
+        setVisible(shouldShow)
+    }
+
+    private func setVisible(_ show: Bool) {
+        guard show != visible else { return }
+        visible = show
+        panel.ignoresMouseEvents = !show
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            panel.animator().alphaValue = show ? 1 : 0
+        })
+    }
+
+    private func showMenu() {
+        let menu = NSMenu()
 
         let state = NSMenuItem(
             title: model.busy ? "正在切换…" : (model.isOn ? "● 合盖后继续运行" : "○ 合盖后正常休眠"),
-            action: nil, keyEquivalent: ""
-        )
+            action: nil, keyEquivalent: "")
         state.isEnabled = false
         menu.addItem(state)
 
         let toggle = NSMenuItem(
             title: model.isOn ? "改为：合盖后正常休眠" : "改为：合盖后继续运行",
-            action: #selector(toggleAction), keyEquivalent: ""
-        )
+            action: #selector(menuToggle), keyEquivalent: "")
         toggle.target = self
         menu.addItem(toggle)
 
         menu.addItem(.separator())
 
-        let idle = NSMenuItem(
-            title: "空闲休眠：\(model.idleSleepText)",
-            action: nil, keyEquivalent: ""
-        )
+        let idle = NSMenuItem(title: "空闲休眠：\(model.idleSleepText)", action: nil, keyEquivalent: "")
         idle.isEnabled = false
         menu.addItem(idle)
 
         if model.idleSleepText.hasPrefix("永不") {
-            let fix = NSMenuItem(
-                title: "修复：空闲休眠恢复为 10 分钟",
-                action: #selector(fixAction), keyEquivalent: ""
-            )
+            let fix = NSMenuItem(title: "修复：空闲休眠恢复为 10 分钟",
+                                 action: #selector(menuFix), keyEquivalent: "")
             fix.target = self
             menu.addItem(fix)
         }
 
         if let error = model.lastError {
             menu.addItem(.separator())
-            let errItem = NSMenuItem(title: error, action: nil, keyEquivalent: "")
-            errItem.isEnabled = false
-            menu.addItem(errItem)
+            let err = NSMenuItem(title: error, action: nil, keyEquivalent: "")
+            err.isEnabled = false
+            menu.addItem(err)
         }
 
         menu.addItem(.separator())
-
-        let hint = NSMenuItem(
-            title: "🌙=合盖休眠（省电）｜☀️=合盖运行（发热耗电）",
-            action: nil, keyEquivalent: ""
-        )
-        hint.isEnabled = false
-        menu.addItem(hint)
-
-        let quit = NSMenuItem(title: "退出", action: #selector(quitAction), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "退出", action: #selector(menuQuit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
+
+        let location = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        menu.popUp(positioning: nil, at: location, in: panel.contentView)
     }
 
-    @objc private func toggleAction() { model.toggle() }
-    @objc private func fixAction() { model.restoreIdleSleep() }
-    @objc private func quitAction() { NSApp.terminate(nil) }
+    @objc private func menuToggle() { model.toggle() }
+    @objc private func menuFix() { model.restoreIdleSleep() }
+    @objc private func menuQuit() { NSApp.terminate(nil) }
 }
 
-// MARK: - 纯 AppKit 入口（不经 SwiftUI）
+// MARK: - 纯 AppKit 入口
 
 @main
 enum KeepAwakeMain {
     static func main() {
-        dbgLog("=== KeepAwake 启动（纯 AppKit）===")
+        dbgLog("=== KeepAwake 启动（灵动岛模式）===")
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        // 菜单栏专用应用：无 Dock 图标（与 LSUIElement 双保险）
         app.setActivationPolicy(.accessory)
         app.run()
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var controller: StatusBarController?
+    private var controller: DynamicIslandController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         dbgLog("applicationDidFinishLaunching 触发")
-        controller = StatusBarController()
+        let island = DynamicIslandController()
+        island.install()
+        controller = island
     }
 }
