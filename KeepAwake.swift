@@ -1,14 +1,15 @@
 // KeepAwake —— 菜单栏常驻「合盖休眠 / 合盖运行」开关
 //
-// 只在顶部菜单栏显示文字标签（无 Dock 图标、无弹窗）：
-//   🌙 合盖休眠（默认，省电） / ☀️ 合盖运行（合盖继续跑）
-// 点击标签即可切换，免密（sudoers.d/keepawake 已配置）。
+// 菜单栏显示单个 emoji（🌙=合盖休眠 / ☀️=合盖运行），最小宽度，
+// 避免在拥挤/有刘海的菜单栏被挤到刘海后面。
+// 支持 ⌘ 拖动换位，autosaveName 记住位置（重启后保持在原地）。
 //
-// 底层：
+// 底层（免密，sudoers.d/keepawake 已配置）：
 //   开 = pmset -a disablesleep 1
 //   关 = pmset -a disablesleep 0 + sleep 10（恢复正常休眠）
 
 import AppKit
+import Combine
 import SwiftUI
 
 final class KeepAwakeModel: ObservableObject {
@@ -53,7 +54,6 @@ final class KeepAwakeModel: ObservableObject {
         }
     }
 
-    // 单独修复：把空闲休眠恢复为 10 分钟（针对之前 sleep 0 导致的永不休眠）
     func restoreIdleSleep() {
         guard !busy else { return }
         busy = true
@@ -72,7 +72,6 @@ final class KeepAwakeModel: ObservableObject {
         }
     }
 
-    // 读取当前 disablesleep（读取不需要 sudo）
     static func readDisablesSleep() -> Bool {
         let output = runAndCapture("/usr/bin/pmset", ["-g", "custom"])
         for rawLine in output.split(separator: "\n") {
@@ -84,7 +83,6 @@ final class KeepAwakeModel: ObservableObject {
         return false
     }
 
-    // 读取空闲休眠分钟数（sleep 0 = 永不）
     static func readIdleSleep() -> String {
         let output = runAndCapture("/usr/bin/pmset", ["-g", "custom"])
         var first = true
@@ -100,8 +98,6 @@ final class KeepAwakeModel: ObservableObject {
         return "?"
     }
 
-    // 设置：优先免密 sudo（配置过 sudoers.d/keepawake 时零弹窗），
-    // 免密不可用时退回 osascript 弹系统密码框。
     // 免密路径必须直接调 /usr/bin/pmset（与 sudoers 规则逐字匹配）。
     static func setDisablesSleep(_ on: Bool) -> Bool {
         if on {
@@ -165,38 +161,113 @@ final class KeepAwakeModel: ObservableObject {
     }
 }
 
+// MARK: - 原生状态栏项（单 emoji + 位置记忆）
+
+final class StatusBarController: NSObject, NSMenuDelegate {
+    private var statusItem: NSStatusItem!
+    private let model = KeepAwakeModel.shared
+    private var cancellables = Set<AnyCancellable>()
+
+    override init() {
+        super.init()
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // 记住 ⌘ 拖动后的位置，重启后保持
+        statusItem.autosaveName = "KeepAwakeStatusItem"
+        statusItem.button?.title = model.isOn ? "☀️" : "🌙"
+
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+
+        model.$isOn
+            .receive(on: RunLoop.main)
+            .sink { [weak self] on in
+                guard let self else { return }
+                let title = on ? "☀️" : "🌙"
+                if self.statusItem.button?.title != title {
+                    self.statusItem.button?.title = title
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    // 每次点开菜单时重建内容（状态实时）
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let state = NSMenuItem(
+            title: model.busy ? "正在切换…" : (model.isOn ? "● 合盖后继续运行" : "○ 合盖后正常休眠"),
+            action: nil, keyEquivalent: ""
+        )
+        state.isEnabled = false
+        menu.addItem(state)
+
+        let toggle = NSMenuItem(
+            title: model.isOn ? "改为：合盖后正常休眠" : "改为：合盖后继续运行",
+            action: #selector(toggleAction), keyEquivalent: ""
+        )
+        toggle.target = self
+        menu.addItem(toggle)
+
+        menu.addItem(.separator())
+
+        let idle = NSMenuItem(
+            title: "空闲休眠：\(model.idleSleepText)",
+            action: nil, keyEquivalent: ""
+        )
+        idle.isEnabled = false
+        menu.addItem(idle)
+
+        if model.idleSleepText.hasPrefix("永不") {
+            let fix = NSMenuItem(
+                title: "修复：空闲休眠恢复为 10 分钟",
+                action: #selector(fixAction), keyEquivalent: ""
+            )
+            fix.target = self
+            menu.addItem(fix)
+        }
+
+        if let error = model.lastError {
+            menu.addItem(.separator())
+            let errItem = NSMenuItem(title: error, action: nil, keyEquivalent: "")
+            errItem.isEnabled = false
+            menu.addItem(errItem)
+        }
+
+        menu.addItem(.separator())
+
+        let hint = NSMenuItem(
+            title: "🌙=合盖休眠（省电）｜☀️=合盖运行（发热耗电）",
+            action: nil, keyEquivalent: ""
+        )
+        hint.isEnabled = false
+        menu.addItem(hint)
+
+        let quit = NSMenuItem(title: "退出", action: #selector(quitAction), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+    }
+
+    @objc private func toggleAction() { model.toggle() }
+    @objc private func fixAction() { model.restoreIdleSleep() }
+    @objc private func quitAction() { NSApp.terminate(nil) }
+}
+
+// MARK: - App
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var controller: StatusBarController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        controller = StatusBarController()
+    }
+}
+
 @main
 struct KeepAwakeApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     var body: some Scene {
-        MenuBarExtra {
-            if KeepAwakeModel.shared.busy {
-                Text("正在切换…")
-            } else {
-                Button(KeepAwakeModel.shared.isOn ? "改为：合盖后正常休眠" : "改为：合盖后继续运行") {
-                    KeepAwakeModel.shared.toggle()
-                }
-            }
-            Divider()
-            Text(KeepAwakeModel.shared.isOn ? "当前：● 合盖后继续运行" : "当前：○ 合盖后正常休眠")
-            Text("空闲休眠：\(KeepAwakeModel.shared.idleSleepText)")
-            if KeepAwakeModel.shared.idleSleepText.hasPrefix("永不") {
-                Button("修复：空闲休眠恢复为 10 分钟") {
-                    KeepAwakeModel.shared.restoreIdleSleep()
-                }
-            }
-            if let error = KeepAwakeModel.shared.lastError {
-                Divider()
-                Text(error)
-            }
-            Divider()
-            Text("合盖运行会发热耗电，用完记得切回")
-            Button("退出") {
-                NSApplication.shared.terminate(nil)
-            }
-        } label: {
-            // 文字标签 + 彩色 emoji，避免小图标被刘海或拥挤的菜单栏挤掉
-            Text(KeepAwakeModel.shared.isOn ? "☀️ 合盖运行" : "🌙 合盖休眠")
-        }
-        .menuBarExtraStyle(.menu)
+        Settings { EmptyView() }
     }
 }
