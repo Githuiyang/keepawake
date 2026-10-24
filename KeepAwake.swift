@@ -1,14 +1,12 @@
-// KeepAwake —— 「合盖休眠 / 合盖运行」开关
+// KeepAwake —— 菜单栏常驻「合盖休眠 / 合盖运行」开关
 //
-// 三个入口都能切换：
-//   1. 菜单栏文字标签（🌙 合盖休眠 / ☀️ 合盖运行）
-//   2. Dock 图标（月亮）点击弹出小面板
-//   3. 启动时自动弹出面板
+// 只在顶部菜单栏显示文字标签（无 Dock 图标、无弹窗）：
+//   🌙 合盖休眠（默认，省电） / ☀️ 合盖运行（合盖继续跑）
+// 点击标签即可切换，免密（sudoers.d/keepawake 已配置）。
 //
-// 开启：pmset -a disablesleep 1            → 合盖继续运行（发热耗电增加）
-// 关闭：pmset -a disablesleep 0 + sleep 10 → 恢复正常休眠
-//
-// 权限：优先免密 sudo（配置过 sudoers.d/keepawake），失败弹系统密码框。
+// 底层：
+//   开 = pmset -a disablesleep 1
+//   关 = pmset -a disablesleep 0 + sleep 10（恢复正常休眠）
 
 import AppKit
 import SwiftUI
@@ -104,8 +102,7 @@ final class KeepAwakeModel: ObservableObject {
 
     // 设置：优先免密 sudo（配置过 sudoers.d/keepawake 时零弹窗），
     // 免密不可用时退回 osascript 弹系统密码框。
-    // 注意：免密路径必须直接调 /usr/bin/pmset（与 sudoers 规则逐字匹配），
-    // 不能套 sh -c，否则 sudoers 匹配不上。
+    // 免密路径必须直接调 /usr/bin/pmset（与 sudoers 规则逐字匹配）。
     static func setDisablesSleep(_ on: Bool) -> Bool {
         if on {
             if runPasswordless(["/usr/bin/pmset", "-a", "disablesleep", "1"]) {
@@ -168,86 +165,8 @@ final class KeepAwakeModel: ObservableObject {
     }
 }
 
-// MARK: - 主面板（Dock 点击 / 启动时弹出）
-
-struct MainView: View {
-    @ObservedObject var model: KeepAwakeModel
-
-    var body: some View {
-        VStack(spacing: 14) {
-            Text(model.isOn ? "☀️ 合盖后继续运行" : "🌙 合盖后正常休眠")
-                .font(.title3.weight(.semibold))
-
-            Text(model.isOn
-                 ? "合上盖子电脑不会睡。注意发热耗电，用完切回。"
-                 : "合上盖子电脑正常休眠，省电。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            if model.busy {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Button(model.isOn ? "切换为：合盖休眠" : "切换为：合盖运行") {
-                    model.toggle()
-                }
-                .controlSize(.large)
-            }
-
-            if model.idleSleepText.hasPrefix("永不") {
-                Button("修复：空闲休眠恢复为 10 分钟") {
-                    model.restoreIdleSleep()
-                }
-                .controlSize(.small)
-            }
-
-            if let error = model.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
-        .padding(24)
-        .frame(width: 340)
-    }
-}
-
-// MARK: - App
-
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var panel: NSPanel?
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.applicationIconImage = NSImage(
-            systemSymbolName: "moon.circle.fill",
-            accessibilityDescription: "KeepAwake"
-        )
-
-        let controller = NSHostingController(rootView: MainView(model: .shared))
-        let newPanel = NSPanel(contentViewController: controller)
-        newPanel.title = "合盖开关"
-        newPanel.styleMask = [.titled, .closable, .miniaturizable]
-        newPanel.isReleasedWhenClosed = false
-        newPanel.center()
-        newPanel.makeKeyAndOrderFront(nil)
-        self.panel = newPanel
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    // Dock 图标被点击时重新打开面板
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            panel?.makeKeyAndOrderFront(nil)
-        }
-        return true
-    }
-}
-
 @main
 struct KeepAwakeApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
     var body: some Scene {
         MenuBarExtra {
             if KeepAwakeModel.shared.busy {
@@ -275,6 +194,7 @@ struct KeepAwakeApp: App {
                 NSApplication.shared.terminate(nil)
             }
         } label: {
+            // 文字标签 + 彩色 emoji，避免小图标被刘海或拥挤的菜单栏挤掉
             Text(KeepAwakeModel.shared.isOn ? "☀️ 合盖运行" : "🌙 合盖休眠")
         }
         .menuBarExtraStyle(.menu)
