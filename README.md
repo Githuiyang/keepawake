@@ -1,62 +1,89 @@
-# KeepAwake —— 菜单栏「合盖不休眠」开关
+# KeepAwake
 
-解决「有时需要合上盖子让电脑继续跑，但常开会严重发热耗电」的问题：
-需要时点一下开启，用完点一下关闭。菜单栏常挂，图标显示当前状态。
+**A Dynamic-Island-style lid toggle for macOS.** Hover the notch — a tiny console card appears. Click to choose whether closing the lid sleeps your Mac or keeps it running. Move the mouse away — it's gone. No menu bar icon, no Dock icon, nothing to look at until you need it.
 
-## 使用
+![demo](docs/demo.gif)
 
-菜单栏图标含义：
-- 🌙 `moon` = 正常休眠（合盖即睡）
-- ☀️ `sun.max.fill` = 合盖不休眠中（继续运行，发热耗电）
+> Swap `pmset disablesleep` on/off with one click · passwordless (optional) · universal binary (Apple Silicon + Intel) · macOS 13+
 
-菜单项：
-- **开启合盖不休眠**：合上盖子机器继续运行（下载/跑服务/挂机）
-- **关闭合盖不休眠**：恢复正常休眠，同时把空闲休眠修回 10 分钟
-- **修复：空闲休眠恢复为 10 分钟**：仅当检测到 `sleep 0`（永不休眠）时出现
+## Why
 
-每次切换会弹一次系统管理员密码框（修改电源设置需要 root 权限）。
+Sometimes you want the lid closed to sleep your MacBook (battery!). Sometimes you're running something — a download, a local server, a render — and closing the lid should **not** interrupt it.
 
-## 原理
+macOS hides the correct switch (`pmset -a disablesleep`) behind a root-only command, and the usual workarounds (`sleep 0`, Amphetamine-style apps) either keep the machine awake *forever* or don't survive lid-close at all. KeepAwake toggles exactly the switch you need, exactly when you need it.
 
-| 开关 | 底层命令 | 效果 |
-|---|---|---|
-| 开 | `sudo pmset -a disablesleep 1` | 合盖不休眠 |
-| 关 | `sudo pmset -a disablesleep 0; sudo pmset -a sleep 10` | 恢复正常 |
+## Install
 
-之前「耗电发热严重」的根源是 `sleep 0`（永不空闲休眠）——那是用错了开关，
-正确的是 `disablesleep`（只管合盖），工具的「关闭/修复」会把它纠正回来。
+### Option A — download
 
-## 开机自启（可选）
+Grab `KeepAwake-universal-macOS.zip` from [Releases](../../releases), unzip, then **right-click → Open** (the app is unsigned; this bypasses Gatekeeper once).
 
-系统设置 → 通用 → 登录项与扩展 → 添加 `KeepAwake.app`。
+To keep it around: **System Settings → General → Login Items** → add KeepAwake.
 
-## 免密切换（已配置）
-
-2026-10-12 已配置 `/etc/sudoers.d/keepawake`，只放行 3 条 pmset 命令，
-切换**不再弹密码**，其他任何 sudo 命令照常要密码：
-
-```
-lihuiyang ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a sleep 10
-```
-
-如果想撤掉免密：
+### Option B — build from source
 
 ```bash
-sudo rm /etc/sudoers.d/keepawake
+git clone https://github.com/Githuiyang/keepawake.git
+cd keepawake
+./build.sh && open KeepAwake.app
 ```
 
-注意：免密路径必须直接调用 `/usr/bin/pmset`（与规则逐字匹配），
-不能套 `sh -c`，代码里已按此实现。
+Requires Xcode Command Line Tools (`xcode-select --install`).
 
-## 重新构建
+## Usage
+
+- Move the cursor to the **top-center of the screen** (the notch area) → the card appears
+- **Click** to toggle: `OFF` (grey, lid closes → sleep) ↔ `ON` (orange, lid closes → keeps running)
+- **Right-click** the card → menu (fix idle sleep, quit)
+- Toggling asks for your admin password once each time — unless you install the passwordless rule below
+
+## Passwordless toggle (optional)
+
+By default every toggle pops a system password dialog, because changing power management requires root. If you toggle often, you can allow exactly the three `pmset` commands KeepAwake uses — nothing else:
 
 ```bash
-./build.sh
+sudo sh install-sudoers.sh        # install
+sudo sh uninstall-sudoers.sh      # remove anytime
 ```
 
-## 热量提示
+This writes `/etc/sudoers.d/keepawake` containing only:
 
-合盖运行时散热变差（键盘出风口被盖住），建议：
-- 尽量插电使用
-- 盖子留一点缝或机器竖放
-- 避免合盖跑重负载任务（编译/训练），轻负载（下载、本地服务）没问题
+```
+YOURNAME ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a sleep 10
+```
+
+Worst case an attacker with your user account can… toggle your lid-sleep setting. No other `sudo` command becomes passwordless.
+
+## How it works
+
+| Action | Command |
+|---|---|
+| ON | `pmset -a disablesleep 1` |
+| OFF | `pmset -a disablesleep 0` + `pmset -a sleep 10` (also repairs a legacy `sleep 0`) |
+| Read state | `ioreg -c IOPMrootDomain -l` → `SleepDisabled` |
+
+The floating card is a borderless `NSPanel` parked just below the menu bar. While hidden it is fully click-through (`ignoresMouseEvents`), so it never interferes with anything. A 0.25 s cursor poll decides when to show it.
+
+Two macOS 26 quirks discovered while building this (and worked around):
+
+1. Emoji set as an `NSStatusBarButton.title` render as **blank space** — that's why this uses SF Symbols / no menu bar item at all.
+2. `pmset -g` **no longer displays** `disablesleep`, even when set. The state is read from the IORegistry kernel property instead.
+
+## Compatibility
+
+- **macOS 13 Ventura and later** (tested through macOS 26)
+- **Universal binary** — Apple Silicon and Intel
+- Non-notched Macs: the card simply appears below the center of the menu bar; everything works the same
+
+⚠️ **Heat note**: running with the lid closed traps heat (the keyboard exhaust is covered). Fine for downloads and light servers; avoid sustained heavy workloads closed-lid, and prefer plugged-in.
+
+## Roadmap
+
+- [ ] Demo GIF + screenshots in `docs/`
+- [ ] Optional login-item registration in-app
+- [ ] English UI localization
+- [ ] Smarter anchor on multi-display setups
+
+## License
+
+[MIT](LICENSE)

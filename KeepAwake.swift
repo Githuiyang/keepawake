@@ -16,7 +16,11 @@ import AppKit
 import Combine
 import SwiftUI
 
+/// 调试日志：默认关闭，设 KEEPAWAKE_DEBUG=1 后写入 /tmp/keepawake_debug.log
+let dbgEnabled = ProcessInfo.processInfo.environment["KEEPAWAKE_DEBUG"] == "1"
+
 func dbgLog(_ message: String) {
+    guard dbgEnabled else { return }
     let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
     let line = "\(stamp)  \(message)\n"
     let path = "/tmp/keepawake_debug.log"
@@ -54,7 +58,10 @@ final class KeepAwakeModel: ObservableObject {
     deinit { timer?.invalidate() }
 
     func refresh() {
-        isOn = Self.readDisablesSleep()
+        // 只有真实变化才赋值：@Published 即使赋相同值也会发事件，
+        // 会误触发灵动岛的"状态变化闪现"
+        let newOn = Self.readDisablesSleep()
+        if newOn != isOn { isOn = newOn }
         idleSleepText = Self.readIdleSleep()
     }
 
@@ -340,8 +347,9 @@ final class DynamicIslandController: NSObject {
 
         // 状态变化时闪现反馈
         model.$isOn
-            .receive(on: RunLoop.main)
+            .removeDuplicates()
             .dropFirst()
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.flash() }
             .store(in: &cancellables)
 

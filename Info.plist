@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>合盖不休眠开关</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.lihuiyang.keepawake</string>
+	<string>com.githuiyang.keepawake</string>
 	<key>CFBundleVersion</key>
 	<string>1.0</string>
 	<key>CFBundleShortVersionString</key>

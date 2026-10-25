@@ -1,19 +1,28 @@
 #!/bin/bash
-# 构建菜单栏 KeepAwake 工具（本机使用，ad-hoc 签名）
+# Build KeepAwake (universal binary: Apple Silicon + Intel, macOS 13+)
 set -e
 cd "$(dirname "$0")"
 
 APP="KeepAwake.app"
+MACOS_MIN="13.0"
+
+echo "Compiling (universal: arm64 + x86_64, min macOS $MACOS_MIN)…"
+swiftc -parse-as-library -O \
+    -target "arm64-apple-macosx${MACOS_MIN}" \
+    -o KeepAwake.arm64 KeepAwake.swift
+swiftc -parse-as-library -O \
+    -target "x86_64-apple-macosx${MACOS_MIN}" \
+    -o KeepAwake.x86_64 KeepAwake.swift
+lipo -create -output KeepAwake.universal KeepAwake.arm64 KeepAwake.x86_64
+rm -f KeepAwake.arm64 KeepAwake.x86_64
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-
-echo "编译 Swift…"
-swiftc -parse-as-library -O -o "$APP/Contents/MacOS/KeepAwake" KeepAwake.swift
+mv KeepAwake.universal "$APP/Contents/MacOS/KeepAwake"
 
 cp Info.plist "$APP/Contents/Info.plist"
 
-# 清除扩展属性并签名（Spotlight 偶发重新打标，重试最多 3 次）
-echo "ad-hoc 签名…"
+echo "Ad-hoc codesign (retry up to 3x for Spotlight xattr races)…"
 for i in 1 2 3; do
     xattr -cr "$APP"
     if codesign --force -s - "$APP" 2>/dev/null; then
@@ -22,5 +31,6 @@ for i in 1 2 3; do
     [ "$i" = "3" ] && { codesign --force -s - "$APP"; exit 1; }
 done
 
-echo "完成：$(pwd)/$APP"
-echo "启动：open $APP"
+lipo -info "$APP/Contents/MacOS/KeepAwake"
+echo "Done: $(pwd)/$APP"
+echo "Launch: open $APP   (debug log: KEEPAWAKE_DEBUG=1 open $APP)"
