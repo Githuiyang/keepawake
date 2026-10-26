@@ -65,10 +65,21 @@ final class KeepAwakeModel: ObservableObject {
         idleSleepText = Self.readIdleSleep()
     }
 
+    // 切换历史：最近 20 条（时间+方向），存 UserDefaults，右键菜单可拷贝
+    static func recordToggle(_ target: Bool) {
+        let d = UserDefaults.standard
+        var history = d.stringArray(forKey: "toggleHistory") ?? []
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: "short", timeStyle: "medium")
+        history.append("\(stamp) → \(target ? "ON" : "OFF")")
+        if history.count > 20 { history.removeFirst(history.count - 20) }
+        d.set(history, forKey: "toggleHistory")
+    }
+
     func toggle() {
         guard !busy else { return }
         busy = true
         let target = !isOn
+        Self.recordToggle(target)
         dbgLog("toggle → \(target)")
         DispatchQueue.global(qos: .userInitiated).async {
             let ok = Self.setDisablesSleep(target)
@@ -420,6 +431,10 @@ final class DynamicIslandController: NSObject {
         }
 
         menu.addItem(.separator())
+        let copyHistory = NSMenuItem(title: "拷贝切换历史（排查用）",
+                                     action: #selector(menuCopyHistory), keyEquivalent: "")
+        copyHistory.target = self
+        menu.addItem(copyHistory)
         let quit = NSMenuItem(title: "退出", action: #selector(menuQuit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -429,6 +444,14 @@ final class DynamicIslandController: NSObject {
     }
 
     @objc private func menuToggle() { model.toggle() }
+
+    @objc private func menuCopyHistory() {
+        let history = UserDefaults.standard.stringArray(forKey: "toggleHistory") ?? []
+        let text = history.isEmpty ? "（暂无记录）" : history.joined(separator: "\n")
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
     @objc private func menuFix() { model.restoreIdleSleep() }
     @objc private func menuQuit() { NSApp.terminate(nil) }
 }
