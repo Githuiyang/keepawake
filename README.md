@@ -4,7 +4,7 @@
 
 ![demo](docs/demo.gif)
 
-> Swap `pmset disablesleep` on/off with one click · passwordless (optional) · universal binary (Apple Silicon + Intel) · macOS 13+
+> Swap `pmset disablesleep` on/off with one click · **flip-guard** (auto-restores ON when other tools silently reset it) · passwordless (optional) · universal binary (Apple Silicon + Intel) · macOS 13+
 
 ## Why
 
@@ -61,8 +61,11 @@ Worst case an attacker with your user account can… toggle your lid-sleep setti
 | ON | `pmset -a disablesleep 1` |
 | OFF | `pmset -a disablesleep 0` + `pmset -a sleep 10` (also repairs a legacy `sleep 0`) |
 | Read state | `ioreg -c IOPMrootDomain -l` → `SleepDisabled` |
+| Flip-guard | armed while ON; if anything resets the flag, re-applies it within ~5 s (logged as `⟳` in toggle history) |
 
 The floating card is a borderless `NSPanel` parked just below the menu bar. While hidden it is fully click-through (`ignoresMouseEvents`), so it never interferes with anything. A 0.25 s cursor poll decides when to show it.
+
+**Why the flip-guard?** Some remote-control apps ship a "keep the controlled Mac awake" feature that writes `disablesleep` themselves — and reset it to `0` on their own session/idle timers (we caught one such helper doing this on a precise 10-minute cycle). With the guard armed, your ON is simply immune: every external reset is reverted within seconds and recorded in the toggle history (right-click → *copy toggle history*).
 
 Two macOS 26 quirks discovered while building this (and worked around):
 
