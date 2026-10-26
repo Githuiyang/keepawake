@@ -14,6 +14,7 @@
 
 import AppKit
 import Combine
+import ServiceManagement
 import SwiftUI
 
 /// 调试日志：默认关闭，设 KEEPAWAKE_DEBUG=1 后写入 /tmp/keepawake_debug.log
@@ -410,6 +411,12 @@ final class DynamicIslandController: NSObject {
         toggle.target = self
         menu.addItem(toggle)
 
+        let login = NSMenuItem(title: "开机自启动（防止工具消失）",
+                               action: #selector(toggleLoginItem), keyEquivalent: "")
+        login.target = self
+        login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        menu.addItem(login)
+
         menu.addItem(.separator())
 
         let idle = NSMenuItem(title: "空闲休眠：\(model.idleSleepText)", action: nil, keyEquivalent: "")
@@ -445,6 +452,18 @@ final class DynamicIslandController: NSObject {
 
     @objc private func menuToggle() { model.toggle() }
 
+    @objc private func toggleLoginItem() {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            model.lastError = "自启动设置失败：\(error.localizedDescription)"
+        }
+    }
+
     @objc private func menuCopyHistory() {
         let history = UserDefaults.standard.stringArray(forKey: "toggleHistory") ?? []
         let text = history.isEmpty ? "（暂无记录）" : history.joined(separator: "\n")
@@ -475,6 +494,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         dbgLog("applicationDidFinishLaunching 触发")
+        // 首次启动自动注册登录项：重启/误退后工具自动回来
+        let d = UserDefaults.standard
+        if !d.bool(forKey: "didAutoRegisterLoginItem") {
+            if SMAppService.mainApp.status != .enabled {
+                try? SMAppService.mainApp.register()
+            }
+            d.set(true, forKey: "didAutoRegisterLoginItem")
+        }
         let island = DynamicIslandController()
         island.install()
         controller = island
