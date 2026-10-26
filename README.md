@@ -14,11 +14,17 @@ macOS hides the correct switch (`pmset -a disablesleep`) behind a root-only comm
 
 ## Install
 
-### Option A — download
+### Option A — download the DMG
 
-Grab `KeepAwake-universal-macOS.zip` from [Releases](../../releases), unzip, then **right-click → Open** (the app is unsigned; this bypasses Gatekeeper once).
+Grab `KeepAwake.dmg` from [Releases](../../releases), open it, drag **KeepAwake.app** to `Applications`.
 
-To keep it around: **System Settings → General → Login Items** → add KeepAwake.
+The app is ad-hoc signed (not notarized). On macOS 15+ Gatekeeper may block the first launch with *"can't be opened"* — allow it in **System Settings → Privacy & Security → Open Anyway**, or run this once in Terminal:
+
+```bash
+xattr -d com.apple.quarantine /Applications/KeepAwake.app
+```
+
+It registers itself as a login item on first launch, so it survives reboots.
 
 ### Option B — build from source
 
