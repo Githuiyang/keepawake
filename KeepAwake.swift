@@ -58,20 +58,38 @@ final class KeepAwakeModel: ObservableObject {
 
     deinit { timer?.invalidate() }
 
+    private var restoreErrorNotified = false
+
     func refresh() {
         // 只有真实变化才赋值：@Published 即使赋相同值也会发事件，
         // 会误触发灵动岛的"状态变化闪现"
         let newOn = Self.readDisablesSleep()
         if newOn != isOn { isOn = newOn }
         idleSleepText = Self.readIdleSleep()
+
+        // 防改回守卫：用户意图是 ON，但被外部改回（如远程软件的保活重置）→ 自动恢复
+        if !newOn && UserDefaults.standard.bool(forKey: "armedOn") {
+            if Self.runPasswordless(["/usr/bin/pmset", "-a", "disablesleep", "1"]) {
+                isOn = true
+                Self.appendHistory("⟳ 自动恢复 ON（被外部改回后重设）")
+                restoreErrorNotified = false
+            } else if !restoreErrorNotified {
+                lastError = "检测到外部改回，但自动恢复失败"
+                restoreErrorNotified = true
+            }
+        }
     }
 
     // 切换历史：最近 20 条（时间+方向），存 UserDefaults，右键菜单可拷贝
     static func recordToggle(_ target: Bool) {
+        appendHistory(target ? "ON（点击）" : "OFF（点击）")
+    }
+
+    static func appendHistory(_ line: String) {
         let d = UserDefaults.standard
         var history = d.stringArray(forKey: "toggleHistory") ?? []
-        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: "short", timeStyle: "medium")
-        history.append("\(stamp) → \(target ? "ON" : "OFF")")
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
+        history.append("\(stamp) → \(line)")
         if history.count > 20 { history.removeFirst(history.count - 20) }
         d.set(history, forKey: "toggleHistory")
     }
@@ -80,6 +98,8 @@ final class KeepAwakeModel: ObservableObject {
         guard !busy else { return }
         busy = true
         let target = !isOn
+        // 记录用户意图：ON = 武装守卫（外部改回自动恢复）；OFF = 解除
+        UserDefaults.standard.set(target, forKey: "armedOn")
         Self.recordToggle(target)
         dbgLog("toggle → \(target)")
         DispatchQueue.global(qos: .userInitiated).async {
