@@ -496,10 +496,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dbgLog("applicationDidFinishLaunching 触发")
         // 首次启动自动注册登录项：重启/误退后工具自动回来
         let d = UserDefaults.standard
-        if !d.bool(forKey: "didAutoRegisterLoginItem") {
-            if SMAppService.mainApp.status != .enabled {
-                try? SMAppService.mainApp.register()
-            }
+        // 只有注册成功才落标记：失败则下次启动重试
+        if !d.bool(forKey: "didAutoRegisterLoginItem"),
+           SMAppService.mainApp.status != .enabled,
+           (try? SMAppService.mainApp.register()) != nil {
             d.set(true, forKey: "didAutoRegisterLoginItem")
         }
         let island = DynamicIslandController()
