@@ -170,7 +170,6 @@ def usage_screenshot(is_on: bool, out: Path):
 def promo_card(out: Path):
     W, H = 1080, 1350
     img = v_gradient((W, H), (36, 35, 33), (19, 18, 17)).convert("RGBA")
-    # 底部橙色氛围光
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     gd.ellipse([W // 2 - 420, H - 620, W // 2 + 420, H + 220], fill=ACCENT + (46,))
@@ -180,55 +179,37 @@ def promo_card(out: Path):
     d = ImageDraw.Draw(img)
     d.rectangle([26, 26, W - 26, H - 26], outline=(255, 255, 255, 20), width=1)
 
+    # 极简层级：徽标行 → 标题 → 一句标语 → 双状态卡片 → 留白 → 二维码 → 地址
     mono_s = load_font(MENLO, 20, "Regular")
-    d.text((W // 2, 108), "O P E N   S O U R C E   ·   M A C O S   1 3 +   ·   M I T",
+    d.text((W // 2, 150), "O P E N   S O U R C E   ·   M I T",
            font=mono_s, fill=WARM_GRAY, anchor="mm")
 
     title_f = load_font(SONGTI, 118, "Bold")
-    d.text((W // 2, 248), "KeepAwake", font=title_f, fill=CREAM, anchor="mm")
+    d.text((W // 2, 306), "KeepAwake", font=title_f, fill=CREAM, anchor="mm")
 
-    tag_f = load_font(SONGTI, 42, "Bold")
-    d.text((W // 2, 356), "合上盖子——睡，还是不睡？", font=tag_f, fill=CREAM, anchor="mm")
-    sub_f = load_font(HIRAGINO, 26, "Regular")
-    d.text((W // 2, 412), "刘海之下的一颗开关", font=sub_f, fill=WARM_GRAY, anchor="mm")
+    tag_f = load_font(SONGTI, 40, "Bold")
+    d.text((W // 2, 424), "合上盖子——睡，还是不睡？", font=tag_f, fill=CREAM, anchor="mm")
 
-    # 双状态卡片
-    draw_card(img, (W // 2 - 141, 508), 1.6, False)
-    draw_card(img, (W // 2 - 141, 612), 1.6, True)
-    swap_f = load_font(MENLO, 18, "Regular")
-    d.text((W // 2 + 160, 580), "↑ 点击切换 ↓", font=swap_f, fill=WARM_GRAY, anchor="lm")
+    draw_card(img, (W // 2 - 141, 548), 1.6, False)
+    draw_card(img, (W // 2 - 141, 648), 1.6, True)
 
-    # 特性
-    feat_f = load_font(HIRAGINO, 29, "Medium")
-    feats = [
-        "平时隐形 · 鼠标移到刘海即现",
-        "一键切换 合盖休眠 / 合盖运行（可免密）",
-        "防改回守卫 · 外部篡改 5 秒自愈",
-        "单文件 Swift · Apple Silicon + Intel",
-    ]
-    y = 780
-    for line in feats:
-        d.ellipse([130, y - 6, 142, y + 6], fill=ACCENT)
-        d.text((166, y), line, font=feat_f, fill=(232, 229, 223), anchor="lm")
-        y += 66
-
-    # 底部：GitHub + 二维码
-    d.line([80, 1120, W - 80, 1120], fill=(255, 255, 255, 26), width=1)
-    gh_s = load_font(MENLO, 21, "Regular")
-    gh_f = load_font(MENLO, 28, "Bold")
-    d.text((100, 1180), "G i t H u b", font=gh_s, fill=WARM_GRAY, anchor="lm")
-    d.text((100, 1226), "github.com/Githuiyang/keepawake", font=gh_f, fill=CREAM, anchor="lm")
-
+    # 二维码：居中，严格在边框内（26..1054 / 26..1324）
     qr = qrcode.QRCode(border=1, box_size=8,
                        error_correction=qrcode.constants.ERROR_CORRECT_M)
     qr.add_data("https://github.com/Githuiyang/keepawake")
     qr.make(fit=True)
     qimg = qr.make_image(fill_color=(31, 30, 29), back_color="white").convert("RGB")
-    qimg = qimg.resize((168, 168))
-    qcard = Image.new("RGBA", (192, 192), (255, 255, 255, 255))
+    qimg = qimg.resize((172, 172))
+    qcard = Image.new("RGBA", (196, 196), (255, 255, 255, 255))
     qcard.paste(qimg, (12, 12))
-    d2 = ImageDraw.Draw(qcard)
-    img.paste(qcard, (W - 292, 1168), qcard)
+    qx, qy = (W - 196) // 2, 900
+    img.paste(qcard, (qx, qy), qcard)
+    # 几何断言：二维码必须完整落在边框内
+    assert qx >= 56 and qy >= 56 and qx + 196 <= W - 56 and qy + 196 <= H - 56, "QR 超界"
+
+    url_f = load_font(MENLO, 26, "Bold")
+    d.text((W // 2, 1160), "github.com/Githuiyang/keepawake",
+           font=url_f, fill=CREAM, anchor="mm")
 
     img.convert("RGB").save(out, "PNG")
     print(f"已生成 {out}")
