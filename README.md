@@ -2,7 +2,7 @@
 
 **A Dynamic-Island-style lid toggle for macOS.** Hover the notch — a tiny console card appears. Click to choose whether closing the lid sleeps your Mac or keeps it running. Move the mouse away — it's gone. No menu bar icon, no Dock icon, nothing to look at until you need it.
 
-![demo](docs/demo.gif)
+![usage](docs/usage-on.png)
 
 > Swap `pmset disablesleep` on/off with one click · **flip-guard** (auto-restores ON when other tools silently reset it) · passwordless (optional) · universal binary (Apple Silicon + Intel) · macOS 13+
 
