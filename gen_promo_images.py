@@ -188,7 +188,7 @@ def promo_card(out: Path):
     d.text((W // 2, 306), "KeepAwake", font=title_f, fill=CREAM, anchor="mm")
 
     tag_f = load_font(SONGTI, 40, "Bold")
-    d.text((W // 2, 424), "合上盖子——睡，还是不睡？", font=tag_f, fill=CREAM, anchor="mm")
+    d.text((W // 2, 424), "无需硬件 · 合盖状态 · 一键切换", font=tag_f, fill=CREAM, anchor="mm")
 
     draw_card(img, (W // 2 - 141, 548), 1.6, False)
     draw_card(img, (W // 2 - 141, 648), 1.6, True)
